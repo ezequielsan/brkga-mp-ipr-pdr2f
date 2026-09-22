@@ -1,0 +1,7 @@
+# BRKGA-MP-IPR library
+/brkga_mp_ipr/
+
+# Build artifacts
+*.o
+main_minimal
+test
