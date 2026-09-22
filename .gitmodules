@@ -1,0 +1,3 @@
+[submodule "external/brkga_mp_ipr_cpp"]
+	path = external/brkga_mp_ipr_cpp
+	url = https://github.com/ceandrade/brkga_mp_ipr_cpp
