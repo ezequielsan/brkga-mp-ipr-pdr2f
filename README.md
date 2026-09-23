@@ -14,10 +14,13 @@ O decodificador é o de limiares em 4 partes de Torres (2026), com a rotina de r
 2. [Instalação passo a passo](#2-instalação-passo-a-passo)
 3. [Compilação](#3-compilação)
 4. [Execução](#4-execução)
-5. [Arquivos de configuração](#5-arquivos-de-configuração)
-6. [Formato das instâncias](#6-formato-das-instâncias)
-7. [Estrutura do projeto](#7-estrutura-do-projeto)
-8. [Licença e citação](#8-licença-e-citação)
+5. [Critérios de parada](#5-critérios-de-parada)
+6. [Warm start com heurística gulosa](#6-warm-start-com-heurística-gulosa)
+7. [Arquivos de configuração](#7-arquivos-de-configuração)
+8. [Formato das instâncias](#8-formato-das-instâncias)
+9. [Experimentos com várias sementes](#9-experimentos-com-várias-sementes)
+10. [Estrutura do projeto](#10-estrutura-do-projeto)
+11. [Licença e citação](#11-licença-e-citação)
 
 ---
 
@@ -30,7 +33,8 @@ O decodificador é o de limiares em 4 partes de Torres (2026), com a rotina de r
 | **Git** | qualquer | Para clonar este projeto e a API. |
 | **OpenMP** | — | Já acompanha o GCC no Linux. |
 
-O projeto foi desenvolvido e testado em **Linux** (Ubuntu, nativo ou via WSL). 
+O projeto foi desenvolvido e testado em **Linux** (Ubuntu, nativo ou via WSL).
+
 ### 1.1 Verificando o que já está instalado
 
 ```bash
@@ -38,6 +42,7 @@ g++ --version
 make --version
 git --version
 ```
+
 ---
 
 ## 2. Instalação passo a passo
@@ -83,17 +88,19 @@ Na raiz do projeto:
 make
 ```
 
-A saída termina com:
+São gerados **dois executáveis**:
 
-```
---> Linking objects...
-g++ ... -o main_minimal
-```
+| executável | para quê |
+|---|---|
+| `main_minimal` | execução simples, com argumentos posicionais. Bom para testar rapidamente. |
+| `main_complete` | execução para experimentos: warm start, verificação de viabilidade, log de convergência e uma linha CSV com todas as estatísticas. |
 
 Outros alvos e opções:
 
 ```bash
-make clean            # apaga os .o e o executável
+make main_minimal     # compila apenas um dos dois
+make main_complete
+make clean            # apaga os .o e os executáveis
 make clean && make    # recompila do zero (necessário após editar qualquer .hpp)
 make -j4              # compila usando 4 processos
 make OPT=debug        # compila com símbolos de depuração, sem otimização
@@ -107,6 +114,8 @@ O `Makefile` compila com `-DMATING_SEED_ONLY`, o que garante que o resultado dep
 
 ## 4. Execução
 
+### 4.1 `main_minimal` — execução rápida
+
 ```
 ./main_minimal <semente> <arquivo-de-config> <tempo-máximo-em-segundos> <instância> [<gerações>]
 ```
@@ -119,26 +128,76 @@ O `Makefile` compila com `-DMATING_SEED_ONLY`, o que garante que o resultado dep
 | `instância` | sim | Caminho do arquivo do grafo. |
 | `gerações` | não | Número máximo de gerações. Se omitido (ou 0), a parada é só por tempo. |
 
-### Exemplos
-
 ```bash
-# BRKGA clássico, com os parâmetros de Torres, parando em 100 gerações
-./main_minimal 1 config_torres.conf 180 instances/ad-hoc-net_150_0.6.txt 100
+# BRKGA clássico, parando em 100 gerações ou 900 s, o que vier primeiro
+./main_minimal 1 config_torres.conf 900 instances/ad-hoc-net_150_0.6.txt 100
 
-# BRKGA-MP-IPR completo, também em 100 gerações
-./main_minimal 1 config_full.conf 180 instances/ad-hoc-net_150_0.6.txt 100
+# BRKGA-MP-IPR completo
+./main_minimal 1 config_full.conf 900 instances/ad-hoc-net_150_0.6.txt 100
 
 # Parando somente por tempo (30 segundos)
 ./main_minimal 1 config_torres.conf 30 instances/bcspwr02.txt
 ```
 
-### Entendendo a saída
+### 4.2 `main_complete` — execução para experimentos
+
+```
+./main_complete --config <arq> --seed <n> --stop_rule <G|I> --stop_arg <n> \
+                --maxtime <s> --instance <arq> \
+                [--threads <n>] [--warmstart <n>] [--no_evolution] [--no_verify] [--quiet]
+```
+
+| Opção | Padrão | Descrição |
+|---|---|---|
+| `--config` | — | Arquivo de parâmetros. |
+| `--seed` | — | Semente do gerador. |
+| `--stop_rule` | — | `G` para número de gerações, `I` para gerações sem melhora. |
+| `--stop_arg` | — | Valor da regra de parada. |
+| `--maxtime` | — | Tempo máximo, em segundos (sempre vale, em OU com a regra acima). |
+| `--instance` | — | Arquivo do grafo. |
+| `--threads` | 1 | Threads na decodificação. |
+| `--warmstart` | 0 | Número de soluções gulosas injetadas na população inicial (ver Seção 6). |
+| `--no_evolution` | — | Desliga os operadores evolutivos (vira um multi-start simples). |
+| `--no_verify` | — | Não verifica a viabilidade da solução final. |
+| `--quiet` | — | Não imprime a lista de vértices por rótulo. |
+
+```bash
+# 100 gerações ou 900 s, o que vier primeiro
+./main_complete --config config_torres.conf --seed 1 --stop_rule G --stop_arg 100 \
+                --maxtime 900 --instance instances/ad-hoc-net_150_0.6.txt
+
+# parando após 50 gerações sem melhora, com 20 soluções gulosas no início
+./main_complete --config config_full.conf --seed 1 --stop_rule I --stop_arg 50 \
+                --maxtime 900 --instance instances/ad-hoc-net_150_0.6.txt --warmstart 20
+```
+
+**Saídas próprias do `main_complete`:**
+
+- **Cabeçalho do experimento**, com todos os parâmetros lidos do config, a semente, a regra de parada e o número de threads.
+- **Log de convergência**, uma linha `* geração | custo | tempo` a cada melhora da melhor solução.
+- **Verificação de viabilidade** da solução final, pela caracterização local do problema (regra do rótulo 0 e regra do rótulo 2). Sai como `% Feasible: yes/no`, e o programa retorna código de saída **2** se a solução for inviável.
+- **Uma linha CSV** com 23 colunas, pronta para virar tabela:
+
+```
+Instance,Config,Seed,Cost,Feasible,NumNodes,NumEdges,WarmStart,InitialCost,TotalIterations,
+LastUpdateIteration,TotalTime,LastUpdateTime,LargestIterationOffset,StalledIterations,
+PRTime,PRCalls,PRNumHomogenities,PRNumImprovBest,PRNumImprovElite,NumExchanges,NumShakes,NumResets
+```
+
+Para acumular resultados em um arquivo, basta pegar a última linha:
+
+```bash
+./main_complete --config config_torres.conf --seed 1 --stop_rule G --stop_arg 100 \
+                --maxtime 900 --instance instances/jean.txt --quiet | tail -1 >> resultados.csv
+```
+
+### 4.3 Entendendo a saída
 
 ```
 Reading data...
 Reading parameters...
 Building BRKGA data and initializing...
-Running for 600s or 100 generations...
+Running for 900s or 100 generations...
 Using 1 threads for decoding
 Exchanged 2 solutions from each population. Iteration 118. ...
 Path relink at 223 iteration. Block size: 18. Type: DIRECT. Distance: CUSTOM. ...
@@ -168,7 +227,46 @@ Best cost: 6
 
 ---
 
-## 5. Arquivos de configuração
+## 5. Critérios de parada
+
+A API **sempre** testa dois critérios, mesmo sem pedido explícito:
+
+1. **tempo máximo** (`--maxtime`, ou `maximum_running_time` no config);
+2. **gerações sem melhora** (`stall_offset` no config; 0 desliga).
+
+Os programas acrescentam um terceiro:
+
+3. **número de gerações** (o quinto argumento do `main_minimal`, ou `--stop_rule G --stop_arg n` no `main_complete`).
+
+Os critérios são combinados em **OU**: a execução para no primeiro que for satisfeito. Por exemplo, com 100 gerações e 900 s, ela termina quando completar as 100 gerações ou quando estourar os 900 s, o que acontecer antes.
+
+> **Detalhe de medição:** o tempo é conferido **entre** as etapas de uma iteração (após o `evolve`, antes do IPR, do *shaking* e do *reset*) e com granularidade de segundos. Por isso o corte pode passar um pouco do limite pedido.
+
+---
+
+## 6. Warm start com heurística gulosa
+
+O `main_complete` pode iniciar a população com soluções construídas pela heurística gulosa de Djukanović et al. (2025), a mesma usada por Torres (2026) no algoritmo genético dele:
+
+1. todos os vértices começam descobertos, com rótulo 0;
+2. a cada passo, escolhe-se o vértice descoberto que cobre mais vértices novos (empate decidido por uma ordem embaralhada);
+3. esse vértice recebe rótulo `min(3, ganho)`, e sua vizinhança fechada passa a estar coberta;
+4. repete-se até cobrir todos os vértices.
+
+A solução gerada é sempre viável. O embaralhamento faz com que chamadas sucessivas produzam soluções diferentes.
+
+```bash
+./main_complete ... --warmstart 20      # gera 20 soluções gulosas
+./main_complete ... --warmstart 0       # sem warm start (padrão)
+```
+
+**Soluções repetidas são descartadas** antes da injeção. Isso é proposital: injetar muitas cópias quase iguais preenche a elite já na geração 0 e destrói a diversidade da busca. O log informa quantas soluções distintas sobraram e o custo da melhor delas, que também vai para a coluna `InitialCost` do CSV.
+
+> **O warm start nem sempre ajuda.** Em grafos densos, o guloso produz poucas soluções distintas, e o ganho de qualidade inicial pode não compensar a perda de diversidade. Por isso ele é opcional: o efeito deve ser medido por instância, comparando execuções com e sem, nas mesmas sementes.
+
+---
+
+## 7. Arquivos de configuração
 
 Os dois arquivos usam o formato da API: uma linha por parâmetro, com linhas em branco e linhas iniciadas por `#` sendo ignoradas.
 
@@ -204,12 +302,14 @@ Mantém os mesmos parâmetros evolutivos e liga os recursos da API:
 > **Atenção:** todos os intervalos (`ipr_interval`, `exchange_interval`, `shake_interval`, `reset_interval`) contam **gerações sem melhora** na melhor solução, e não gerações totais. Dentro de uma iteração, a ordem é: IPR, migração, *shaking*, *reset*.
 
 > **Dois pontos que exigem código, e não apenas configuração:**
-> 1. `bias_type CUSTOM` só funciona porque o `main_minimal.cpp` chama `setBiasCustomFunction`. Sem essa chamada, a API usaria viés constante (0,5) **sem emitir nenhum aviso**.
+> 1. `bias_type CUSTOM` só funciona porque os `main` chamam `setBiasCustomFunction`. Sem essa chamada, a API usaria viés constante (0,5) **sem emitir nenhum aviso**.
 > 2. `pr_distance_function_type CUSTOM` exige que `brkga_params.pr_distance_function` receba um `PDR2F_Distance` **antes** de o algoritmo ser construído. Sem isso, com o IPR ligado, a execução aborta com a mensagem "IPR is active but the distance function is not set".
+
+> **Comparações justas entre os dois configs:** com 3 populações, cada geração faz o triplo de decodificações. Para comparar, iguale o número total de decodificações (por exemplo, 300 gerações no clássico contra 100 no completo) ou o tempo de execução.
 
 ---
 
-## 6. Formato das instâncias
+## 8. Formato das instâncias
 
 Cada arquivo é uma **lista de arestas**, uma por linha, com dois inteiros separados por espaço:
 
@@ -235,7 +335,40 @@ As instâncias disponíveis em `instances/` são:
 
 ---
 
-## 7. Estrutura do projeto
+## 9. Experimentos com várias sementes
+
+O BRKGA é estocástico: uma execução isolada diz pouco. O padrão é rodar várias sementes e reportar melhor, média, mediana, desvio e pior.
+
+### Resumo rápido no terminal
+
+```bash
+for s in $(seq 0 19); do
+  ./main_complete --config config_torres.conf --seed $s --stop_rule G --stop_arg 100 \
+                  --maxtime 900 --instance instances/ad-hoc-net_150_0.6.txt --quiet \
+    | tail -1 | cut -d, -f4
+done | python3 -c "
+import sys, statistics as st
+v = [int(x) for x in sys.stdin]
+print('melhor', min(v), '| media', round(st.mean(v), 2), '| mediana', st.median(v),
+      '| desvio', round(st.pstdev(v), 2), '| pior', max(v))"
+```
+
+### Acumulando um CSV completo
+
+```bash
+for inst in instances/*.txt; do
+  for s in $(seq 0 19); do
+    ./main_complete --config config_torres.conf --seed $s --stop_rule G --stop_arg 100 \
+                    --maxtime 900 --instance "$inst" --quiet | tail -1 >> resultados.csv
+  done
+done
+```
+
+O cabeçalho das colunas é impresso pelo programa na penúltima linha da saída; basta copiá-lo uma vez para o topo do `resultados.csv`.
+
+---
+
+## 10. Estrutura do projeto
 
 ```
 brkga-mp-ipr-pdr2f/
@@ -247,9 +380,13 @@ brkga-mp-ipr-pdr2f/
 │   └── pdr2f_decoder.cpp
 ├── distances/
 │   └── pdr2f_distance.hpp      # distância entre cromossomos, usada pelo IPR
+├── heuristics/
+│   ├── greedy_pdr2f.hpp        # heurística gulosa (warm start)
+│   └── greedy_pdr2f.cpp
 ├── instances/                  # grafos de teste
 ├── brkga_mp_ipr/               # API (NÃO versionada — ver o Passo 2)
-├── main_minimal.cpp            # programa principal
+├── main_minimal.cpp            # execução simples
+├── main_complete.cpp           # execução para experimentos
 ├── config_torres.conf          # BRKGA clássico
 ├── config_full.conf            # BRKGA-MP-IPR completo
 └── Makefile
@@ -262,12 +399,15 @@ brkga-mp-ipr-pdr2f/
    - cada chave vira um rótulo pela faixa em que cai: [0; 0,25) → 0, [0,25; 0,5) → 1, [0,5; 0,75) → 2, [0,75; 1) → 3;
    - `fixInstance` conserta a rotulação para que ela seja uma função de dominação romana 2-forte;
    - o *fitness* é a soma dos rótulos.
-3. **`PDR2F_Distance`** informa ao IPR quando duas chaves representam rótulos diferentes.
-4. **`main_minimal.cpp`** lê os argumentos e a configuração, monta o algoritmo, define o viés, a função de distância e o critério de parada, e chama `run()`.
+3. **`greedy_pdr2f`** constrói soluções gulosas viáveis, usadas como warm start.
+4. **`PDR2F_Distance`** informa ao IPR quando duas chaves representam rótulos diferentes.
+5. **`main_minimal.cpp` / `main_complete.cpp`** leem os argumentos e a configuração, montam o algoritmo, definem o viés, a função de distância e os critérios de parada, e chamam `run()`.
+
+> **Por que o reparo é aplicado de novo ao final:** a API guarda apenas as chaves e o valor do *fitness*, nunca a solução decodificada, e o nosso decodificador não reescreve o cromossomo. Por isso, para exibir a solução, os `main` refazem o mesmo caminho do `decode`: convertem as chaves em rótulos e aplicam o `fixInstance`. Como a rotina é determinística, a soma resultante é sempre igual ao `best_fitness` informado pela API.
 
 ---
 
-## 8. Licença e citação
+## 11. Licença e citação
 
 Este repositório **não redistribui** a API BRKGA-MP-IPR: ela é baixada separadamente (Passo 2) e mantém a licença do seu autor.
 

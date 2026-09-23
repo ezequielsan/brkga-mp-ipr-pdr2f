@@ -9,24 +9,34 @@ OPT = opt
 
 # Mating: MATING_SEED_ONLY torna o resultado dependente apenas da semente
 # (e nao do numero de threads), o que e' o desejavel nos experimentos.
-USER_FLAGS += -DMATING_SEED_ONLY
+# USER_FLAGS += -DMATING_SEED_ONLY
 
-# Caminhos dos cabecalhos. Se a API for um submodulo git, troque por:
+# When using Torres's configuration (config_torres.conf):
+USER_FLAGS += -DMATING_SEQUENTIAL
+# In this case, the mating process is completely sequential, 
+# as in the original BRKGA.
+# If this flag is changed, run `make clean && make` to rebuild the project.
+
+# Header paths.
 INCLUDES = \
 	-I. \
 	-I./brkga_mp_ipr
 
 OBJS = \
 	./pdr2f/pdr2f_instance.o \
-	./decoders/pdr2f_decoder.o
-
+	./decoders/pdr2f_decoder.o \
+	./heuristics/greedy_pdr2f.o
+ 
 MAIN_MINIMAL_OBJ = main_minimal.o
 MAIN_MINIMAL_EXE = main_minimal
-
+ 
+MAIN_COMPLETE_OBJ = main_complete.o
+MAIN_COMPLETE_EXE = main_complete
+ 
 CXX = g++
-
+ 
 USER_FLAGS += -std=c++20
-
+ 
 ifneq ($(OPT), opt)
 	USER_FLAGS += -ggdb3 -fexceptions -fno-omit-frame-pointer \
 		-fno-optimize-sibling-calls -fno-inline
@@ -36,33 +46,39 @@ else
 		USER_FLAGS += -ftracer -fpeel-loops -fprefetch-loop-arrays -flto=auto
 	endif
 endif
-
+ 
 USER_FLAGS += -pthread -fopenmp
-
+ 
 USER_FLAGS += -Wall -Wextra -Wcast-align -Wcast-qual -Wdisabled-optimization \
 	-Wformat=2 -Winit-self -Wmissing-format-attribute -Wshadow \
 	-Wpointer-arith -Wredundant-decls -Wstrict-aliasing=2 \
 	-Wfloat-equal -Weffc++
-
+ 
 CXXFLAGS = $(USER_FLAGS)
-
+ 
 .PHONY: all clean
 .SUFFIXES: .cpp .o
-
-all: main_minimal
-
+ 
+all: main_minimal main_complete
+ 
 main_minimal: $(OBJS) $(MAIN_MINIMAL_OBJ)
 	@echo "--> Linking objects... "
 	$(CXX) $(CXXFLAGS) $(OBJS) $(MAIN_MINIMAL_OBJ) -o $(MAIN_MINIMAL_EXE)
 	@echo
-
+ 
+main_complete: $(OBJS) $(MAIN_COMPLETE_OBJ)
+	@echo "--> Linking objects... "
+	$(CXX) $(CXXFLAGS) $(OBJS) $(MAIN_COMPLETE_OBJ) -o $(MAIN_COMPLETE_EXE)
+	@echo
+ 
 .cpp.o:
 	@echo "--> Compiling $<..."
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(USER_DEFINES) -c $< -o $@
 	@echo
-
+ 
 clean:
 	@echo "--> Cleaning compiled..."
-	rm -rf $(OBJS) $(MAIN_MINIMAL_OBJ) $(MAIN_MINIMAL_EXE)
+	rm -rf $(OBJS) $(MAIN_MINIMAL_OBJ) $(MAIN_MINIMAL_EXE) \
+$(MAIN_COMPLETE_OBJ) $(MAIN_COMPLETE_EXE)
 	rm -rf *.o
 	rm -rf *.dSYM
