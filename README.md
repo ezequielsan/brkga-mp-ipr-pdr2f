@@ -16,10 +16,8 @@ O decodificador é o de limiares em 4 partes de Torres (2026), com a rotina de r
 4. [Execução](#4-execução)
 5. [Arquivos de configuração](#5-arquivos-de-configuração)
 6. [Formato das instâncias](#6-formato-das-instâncias)
-7. [Rodando experimentos com várias sementes](#7-rodando-experimentos-com-várias-sementes)
-8. [Estrutura do projeto](#8-estrutura-do-projeto)
-9. [Solução de problemas](#9-solução-de-problemas)
-10. [Licença e citação](#10-licença-e-citação)
+7. [Estrutura do projeto](#7-estrutura-do-projeto)
+8. [Licença e citação](#8-licença-e-citação)
 
 ---
 
