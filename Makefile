@@ -25,6 +25,7 @@ INCLUDES = \
 OBJS = \
 	./pdr2f/pdr2f_instance.o \
 	./decoders/pdr2f_decoder.o \
+	./decoders/pdr2f_perm_decoder.o \
 	./heuristics/greedy_pdr2f.o
  
 MAIN_MINIMAL_OBJ = main_minimal.o

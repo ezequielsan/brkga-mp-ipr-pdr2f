@@ -8,12 +8,14 @@
  * Usage:
  *   main_complete --config <arq> --seed <n> --stop_rule <G|I> --stop_arg <n>
  *                 --maxtime <s> --instance <arq>
+ *                 [--decoder <threshold|permutation>]
  *                 [--threads <n>] [--warmstart <n>] [--no_evolution]
  *                 [--no_verify] [--quiet]
  *****************************************************************************/
 
 #include "pdr2f/pdr2f_instance.hpp"
 #include "decoders/pdr2f_decoder.hpp"
+#include "decoders/pdr2f_perm_decoder.hpp"
 #include "heuristics/greedy_pdr2f.hpp"
 #include "brkga_mp_ipr.hpp"
 #include "distances/pdr2f_distance.hpp"
@@ -94,6 +96,49 @@ bool is_feasible(const PDR2F_Instance& instance,
     return true;
 }
 
+//--------------------------[ Decoder dispatcher ]----------------------------//
+
+/**
+ * \brief Escolhe, em tempo de execucao, entre os decodificadores.
+ *
+ * A classe BRKGA_MP_IPR e' um template parametrizado pelo tipo do decoder, ou
+ * seja, o tipo e' fixado em tempo de compilacao. Este involucro permite
+ * escolher o decodificador pela linha de comando, ao custo de um desvio por
+ * decodificacao.
+ */
+class PDR2F_AnyDecoder {
+public:
+    PDR2F_AnyDecoder(const PDR2F_Instance& instance, bool _use_permutation):
+        threshold_decoder(instance),
+        perm_decoder(instance),
+        use_permutation(_use_permutation)
+    {}
+
+    BRKGA::fitness_t decode(BRKGA::Chromosome& chromosome, bool rewrite) {
+        return use_permutation?
+               perm_decoder.decode(chromosome, rewrite) :
+               threshold_decoder.decode(chromosome, rewrite);
+    }
+
+    /// Rebuilds the labels of a chromosome, using the chosen decoder.
+    vector<unsigned> solution(const BRKGA::Chromosome& chromosome) {
+        if(use_permutation)
+            return perm_decoder.solution(chromosome);
+
+        vector<unsigned> labels(threshold_decoder.instance.num_nodes);
+        for(unsigned v = 0; v < labels.size(); ++v)
+            labels[v] = PDR2F_Decoder::label(chromosome[v]);
+        threshold_decoder.fixInstance(labels);
+
+        return labels;
+    }
+
+public:
+    PDR2F_Decoder threshold_decoder;
+    PDR2F_Perm_Decoder perm_decoder;
+    bool use_permutation;
+};
+
 //---------------------------[ Argument parsing ]-----------------------------//
 
 /// Reads "--key value" and "--flag" pairs into a map.
@@ -149,6 +194,8 @@ Options:
   --stop_arg <n>     Valor para a regra de parada.
   --maxtime <s>      Tempo maximo, em segundos.
   --instance <arq>   Arquivo da instancia (lista de arestas).
+  --decoder <arg>    'threshold' (limiares de Torres, 2026) ou 'permutation'
+                     (ordem de prioridade) [padrao: threshold].
   --threads <n>      Threads na decodificacao [padrao: 1].
   --warmstart <n>    Numero de solucoes gulosas injetadas na populacao inicial
                      (0 = sem warm start) [padrao: 0]. Solucoes repetidas sao
@@ -166,6 +213,7 @@ Options:
     seconds max_time {0};
     unsigned num_threads = 1;
     unsigned num_warmstart = 0;
+    string decoder_name = "threshold";
     bool perform_evolution = true;
     bool verify = true;
     bool quiet = false;
@@ -180,6 +228,7 @@ Options:
         stop_rule = StopRule(toupper(get_required(args, "--stop_rule")[0]));
         stop_arg = unsigned(stoul(get_required(args, "--stop_arg")));
         max_time = seconds {stol(get_required(args, "--maxtime"))};
+        decoder_name = get_optional(args, "--decoder", "threshold");
         num_threads = unsigned(stoul(get_optional(args, "--threads", "1")));
         num_warmstart = unsigned(stoul(get_optional(args, "--warmstart", "0")));
         perform_evolution = (args.count("--no_evolution") == 0);
@@ -199,6 +248,9 @@ Options:
 
         if(num_threads == 0 || num_threads > 64)
             throw logic_error("'threads' must be in [1, 64]");
+
+        if(decoder_name != "threshold" && decoder_name != "permutation")
+            throw logic_error("'decoder' must be 'threshold' or 'permutation'");
     }
     catch(exception& e) {
         cerr
@@ -249,6 +301,7 @@ Options:
         << "\n> Stop rule: "
         << (stop_rule == StopRule::GENERATIONS? "Generations" : "Improvement")
         << "\n> Stop argument: " << stop_arg
+        << "\n> Decoder: " << decoder_name
         << "\n> Warm-start solutions: " << num_warmstart
         << "\n> Number of threads for decoding: " << num_threads;
         if(!perform_evolution)
@@ -288,9 +341,9 @@ Options:
         << "Chromosome size: " << chromosome_size
         << endl;
 
-        PDR2F_Decoder decoder(instance);
+        PDR2F_AnyDecoder decoder(instance, decoder_name == "permutation");
 
-        BRKGA::BRKGA_MP_IPR<PDR2F_Decoder> algorithm(
+        BRKGA::BRKGA_MP_IPR<PDR2F_AnyDecoder> algorithm(
             decoder, BRKGA::Sense::MINIMIZE, seed, chromosome_size,
             brkga_params, num_threads, perform_evolution
         );
@@ -325,13 +378,18 @@ Options:
             );
         }
 
-        //////////////////////////////////////////////////
+        ////////////////////////////////////////
         // Injecting the initial/incumbent solutions.
-        //////////////////////////////////////////////////
+        ////////////////////////////////////////
 
         BRKGA::fitness_t initial_cost = 0.0;
         unsigned num_injected = 0;
 
+        if(num_warmstart > 0 && decoder_name == "permutation") {
+            cout << "\n> AVISO: warm start ignorado; a codificacao das solucoes "
+                    "gulosas e' especifica do decoder 'threshold'." << endl;
+        }
+        else
         if(num_warmstart > 0) {
             log("Generating initial solutions");
 
@@ -390,11 +448,8 @@ Options:
         // Extracting the best solution.
         ////////////////////////////////////////
 
-        // Decodifica de novo o melhor cromossomo (chaves -> rotulos -> reparo).
-        vector<unsigned> labels(instance.num_nodes);
-        for(unsigned v = 0; v < instance.num_nodes; ++v)
-            labels[v] = PDR2F_Decoder::label(final_status.best_chromosome[v]);
-        decoder.fixInstance(labels);
+        // Decodifica de novo o melhor cromossomo para recuperar os rotulos.
+        const auto labels = decoder.solution(final_status.best_chromosome);
 
         const bool feasible = verify? is_feasible(instance, labels) : true;
 
@@ -443,6 +498,7 @@ Options:
         cout <<
         "\nInstance,"
         "Config,"
+        "Decoder,"
         "Seed,"
         "Cost,"
         "Feasible,"
@@ -469,6 +525,7 @@ Options:
         cout
         << instance_name << ","
         << config_name << ","
+        << decoder_name << ","
         << seed << ","
         << setiosflags(ios::fixed) << setprecision(0)
         << final_status.best_fitness << ","
